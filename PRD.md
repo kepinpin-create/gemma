@@ -1,6 +1,6 @@
 # PRD — Gemma
 
-Nov 14, 2026 · @Kevin
+Nov 14, 2026 · @Kevin · updated Nov 15, 2026: stack changed from Next.js + Supabase to React + FastAPI (Python)
 
 ## Overview
 
@@ -31,7 +31,7 @@ The MVP is accounts, workspaces, projects, a Kanban board, a list view, and task
 
 | Area | MVP (v1) | Later (v2+) |
 | --- | --- | --- |
-| Accounts | Email + password, Google sign-in, password reset | SSO (SAML), 2FA |
+| Accounts | Email + password | Google sign-in, password reset, email confirmation (each needs an external service), SSO (SAML), 2FA |
 | Workspaces | Create, invite by email, 4 roles | Billing, multiple plans |
 | Projects | Create, archive, star, key prefix (e.g. MAS) | Templates, client portal |
 | Board | 5 default stages, drag and drop, stat cards | Custom stages per project, WIP limits, swimlanes |
@@ -46,12 +46,12 @@ The MVP is accounts, workspaces, projects, a Kanban board, a list view, and task
 
 ## Accounts and auth
 
-Accounts come in phase 2 (build steps 10–11); phase 1 runs on one default workspace with no login. Use Supabase Auth for sign-in and Postgres Row Level Security (RLS) for access, so you never write password or session code yourself. A user belongs to one or more workspaces; every project and task belongs to exactly one workspace, and RLS only returns rows from workspaces the user is a member of.
+Accounts are built in from the start; there is no no-login phase. The FastAPI backend handles sign-in itself: passwords are stored as bcrypt hashes and the session lives in a signed, HTTP-only cookie. A user belongs to one or more workspaces; every project and task belongs to exactly one workspace, and every API route checks that the signed-in user is a member of that workspace, with a high enough role, before it reads or writes anything.
 
 **Sign-up and login flow**
 
-1. User signs up with email + password or "Continue with Google".
-2. Email confirmation link (Supabase sends it).
+1. User signs up with email + password. Google sign-in is deferred until a Google OAuth client exists.
+2. Email confirmation is deferred until an email service is configured; for now the account is active at once.
 3. First login with no workspace → onboarding: enter workspace name (e.g. "HashMicro ID") and display name.
 4. User lands on the project list of that workspace.
 5. Invited users click the invite link → sign up or log in → auto-join the workspace with the invited role.
@@ -71,17 +71,14 @@ Accounts come in phase 2 (build steps 10–11); phase 1 runs on one default work
 **Acceptance criteria**
 
 - Logged-out users hitting any app URL are redirected to /login and returned to that URL after login
-- A user can never read or write another workspace's data, even by calling the API directly (verified by an RLS test)
+- A user can never read or write another workspace's data, even by calling the API directly (verified by a backend test)
 - Session persists across refresh; "Log out" clears it on all tabs
 - Workspace switcher in the top bar (the "Company" slot in the reference) lists only the user's workspaces
 - Avatar menu (top right) shows name, email, profile settings, log out
 
-**Setup steps (Supabase dashboard)**
+**Setup steps (local)**
 
-- [ ] Create project, copy URL and anon key into `.env.local`
-- [ ] Authentication → Providers: enable Email and Google (Google Cloud OAuth client, redirect URL from Supabase)
-- [ ] Authentication → URL configuration: add `http://localhost:3000` and your Vercel domain
-- [ ] Run the schema SQL (Data model section), then enable RLS on every table
+See "Run locally" in `README.md`: install uv and Node.js, seed the SQLite database, start the API and the frontend.
 
 ## Features and user stories
 
@@ -186,7 +183,7 @@ Two levels share the same widgets: a **workspace dashboard** at /\[workspace\]/d
 **Health status rule:** On track = no overdue tasks; At risk = 1–2 overdue, or under 50% done with under 7 days to the project end date; Off track = 3+ overdue or overdue is 10%+ of open tasks.
 
 - Filters at the top: date range (default last 8 weeks), project (workspace level only), assignee
-- Numbers come from one Postgres function per widget (e.g. `dashboard_kpis(workspace_id, from, to)`), so RLS still applies
+- Numbers come from one Python function per widget (`backend/app/dashboard.py`), behind the same membership check as every other route
 - Charts with Recharts, coloured with the stat tokens (Done green, Overdue red, In Progress blue)
 - Projects get optional `start_date` and `end_date` columns for the health rule
 - Loads in under 2 seconds for 10 projects and 1,000 tasks
@@ -197,9 +194,9 @@ Seven features come after v1, once a real team has used Gemma for at least two w
 
 | # | Feature | What it does | Effort | Data changes |
 | --- | --- | --- | --- | --- |
-| V1 | File attachments | Upload documents and photos to a task; preview images, download others | Low | `task_attachments` (task\_id, path, name, size, uploaded\_by); one Supabase Storage bucket per workspace |
+| V1 | File attachments | Upload documents and photos to a task; preview images, download others | Low | `task_attachments` (task\_id, path, name, size, uploaded\_by); one storage folder per workspace |
 | V2 | Project templates | Save a project as a template; start a new project from one ("Event plan", "Client onboarding") | Medium | `project_templates` (workspace\_id, name, tasks jsonb with title, stage, priority, due-day offset) |
-| V3 | Recurring tasks | "Every Monday: weekly report" creates the task itself | Medium | `recurrence_rules` (task fields, rule, next\_run\_at); a Supabase cron job creates due tasks |
+| V3 | Recurring tasks | "Every Monday: weekly report" creates the task itself | Medium | `recurrence_rules` (task fields, rule, next\_run\_at); a scheduled job creates due tasks |
 | V4 | Custom fields | Each project adds its own fields: budget, location, vendor, dropdowns | Medium | `custom_fields` (project\_id, name, type, options, position); `task_field_values` (task\_id, field\_id, value) |
 | V5 | Time tracking | Estimated vs actual hours per task; feeds a dashboard widget | Medium | `tasks.estimate_hours`; `time_entries` (task\_id, user\_id, minutes, note, logged\_on) |
 | V6 | Custom stages per project | Each project defines its own columns, names and colours | Medium | `project_stages` (project\_id, name, colour, position, is\_done); `tasks.stage` becomes `stage_id` |
@@ -268,206 +265,62 @@ Red stays only for meaning (Overdue, errors, destructive actions), never as a br
 
 ## Data model
 
-Eleven tables in Supabase Postgres. Every row that holds work carries `workspace_id`, so one RLS rule ("is the user a member of this workspace?") protects everything.
+Eleven tables, defined as SQLAlchemy models in `backend/app/models.py` (the source of truth). SQLite locally; Postgres in production by changing `DATABASE_URL`. Every row that holds work carries `workspace_id`, so one check ("is the user a member of this workspace?") protects everything.
 
 | Table | Key columns | Notes |
 | --- | --- | --- |
-| profiles | id (= auth user id), full\_name, avatar\_url | Created by trigger on sign-up |
+| users | id, email, password_hash, full_name | Sign-in and profile in one table |
 | workspaces | id, name, created\_by | The "Company" in the top bar |
 | workspace\_members | workspace\_id, user\_id, role | role: owner / admin / member / viewer |
 | invitations | workspace\_id, email, role, token, expires\_at, accepted\_at | Token goes in the invite link |
 | projects | workspace\_id, name, key, color, logo\_url, status, task\_seq | key = MAS; task\_seq feeds task numbers |
 | project\_stars | user\_id, project\_id | Per-user favourites |
-| tasks | project\_id, workspace\_id, number, title, description, stage, priority, type, approval, reference\_code, due\_date, position, completed\_at | Display key = project.key + "-" + number |
+| tasks | project_id, workspace_id, number, title, description, stage, prev_stage, priority, type, approval, reference_code, due_date, position, completed_at | Display key = project.key + "-" + number; prev_stage lets "untick done" restore the stage |
 | task\_assignees | task\_id, user\_id | Many assignees per task |
 | comments | task\_id, workspace\_id, author\_id, body |  |
 | activity | task\_id, workspace\_id, actor\_id, action, from\_value, to\_value | Written by triggers, read-only for users |
 | notifications | user\_id, task\_id, kind, read\_at |  |
 
-**Schema SQL (paste into Supabase SQL editor)**
-
-```sql
-create type ws_role as enum ('owner','admin','member','viewer');
-create type task_stage as enum ('backlog','todo','in_progress','in_review','done');
-create type task_priority as enum ('low','medium','high','urgent');
-create type task_type as enum ('task','milestone','issue','request');
-create type approval_state as enum ('not_needed','needed','approved');
-
-create table profiles (
-  id uuid primary key references auth.users on delete cascade,
-  full_name text, avatar_url text, created_at timestamptz default now()
-);
-create table workspaces (
-  id uuid primary key default gen_random_uuid(),
-  name text not null, created_by uuid references profiles, created_at timestamptz default now()
-);
-create table workspace_members (
-  workspace_id uuid references workspaces on delete cascade,
-  user_id uuid references profiles on delete cascade,
-  role ws_role not null default 'member',
-  primary key (workspace_id, user_id)
-);
-create table invitations (
-  id uuid primary key default gen_random_uuid(),
-  workspace_id uuid references workspaces on delete cascade,
-  email text not null, role ws_role not null default 'member',
-  token text unique not null default encode(gen_random_bytes(24),'hex'),
-  expires_at timestamptz default now() + interval '7 days', accepted_at timestamptz
-);
-create table projects (
-  id uuid primary key default gen_random_uuid(),
-  workspace_id uuid references workspaces on delete cascade not null,
-  name text not null, key text not null check (key ~ '^[A-Z]{2,5}$'),
-  color text default '#1D4ED8', logo_url text,
-  status text default 'open', task_seq int not null default 0,
-  start_date date, end_date date,
-  archived_at timestamptz, created_by uuid references profiles, created_at timestamptz default now(),
-  unique (workspace_id, key)
-);
-create table project_stars (
-  user_id uuid references profiles on delete cascade,
-  project_id uuid references projects on delete cascade,
-  primary key (user_id, project_id)
-);
-create table tasks (
-  id uuid primary key default gen_random_uuid(),
-  project_id uuid references projects on delete cascade not null,
-  workspace_id uuid references workspaces on delete cascade not null,
-  number int not null,
-  title text not null, description text,
-  stage task_stage not null default 'todo',
-  priority task_priority not null default 'medium',
-  type task_type not null default 'task',
-  approval approval_state not null default 'not_needed',
-  reference_code text, due_date date,
-  position double precision not null default 0,
-  completed_at timestamptz,
-  created_by uuid references profiles, created_at timestamptz default now(), updated_at timestamptz default now(),
-  unique (project_id, number)
-);
-create table task_assignees (
-  task_id uuid references tasks on delete cascade,
-  user_id uuid references profiles on delete cascade,
-  primary key (task_id, user_id)
-);
-create table comments (
-  id uuid primary key default gen_random_uuid(),
-  task_id uuid references tasks on delete cascade,
-  workspace_id uuid references workspaces on delete cascade,
-  author_id uuid references profiles, body text not null, created_at timestamptz default now()
-);
-create table activity (
-  id bigserial primary key,
-  task_id uuid references tasks on delete cascade,
-  workspace_id uuid references workspaces on delete cascade,
-  actor_id uuid references profiles, action text not null,
-  from_value text, to_value text, created_at timestamptz default now()
-);
-create table notifications (
-  id bigserial primary key,
-  user_id uuid references profiles on delete cascade,
-  task_id uuid references tasks on delete cascade,
-  kind text not null, read_at timestamptz, created_at timestamptz default now()
-);
-
--- Membership check used by every policy
-create function is_member(ws uuid, min_role ws_role default 'viewer')
-returns boolean language sql security definer stable set search_path = public as $$
-  select exists (
-    select 1 from workspace_members
-    where workspace_id = ws and user_id = auth.uid()
-      and array_position(enum_range(null::ws_role), role)
-       <= array_position(enum_range(null::ws_role), min_role)
-  );
-$$;
-
--- Task number: MAS-1, MAS-2, ... never reused
-create function next_task_number() returns trigger language plpgsql security definer set search_path = public as $$
-begin
-  update projects set task_seq = task_seq + 1 where id = new.project_id
-  returning task_seq, workspace_id into new.number, new.workspace_id;
-  return new;
-end $$;
-create trigger tasks_number before insert on tasks
-  for each row execute function next_task_number();
-
--- RLS (repeat the pattern for comments, activity, task_assignees)
-alter table projects enable row level security;
-alter table tasks enable row level security;
-create policy "read projects" on projects for select using (is_member(workspace_id));
-create policy "admins write projects" on projects for all using (is_member(workspace_id,'admin'));
-create policy "read tasks" on tasks for select using (is_member(workspace_id));
-create policy "members insert tasks" on tasks for insert with check (is_member(workspace_id,'member'));
-create policy "members update tasks" on tasks for update using (is_member(workspace_id,'member'));
-create policy "delete tasks" on tasks for delete
-  using (is_member(workspace_id,'admin') or (is_member(workspace_id,'member') and created_by = auth.uid()));
-```
-
-The role check relies on the enum order owner → viewer: a lower position means more power, so `is_member(ws,'member')` passes for owners, admins and members.
+Roles are ordered owner → admin → member → viewer: a lower position means more power, so a check for "member" passes for owners, admins and members. The first draft's Supabase SQL and RLS policies were removed with the stack change; they are in the Git history (commit f44e40c).
 
 ## Tech stack and architecture
 
-Next.js on Vercel for the app, Supabase for auth, database, realtime and file storage. Both have free tiers that cover a pilot team, and AI coding tools know this pair well.
-
-&#91;embedded content: architecture · browser, Vercel, Supabase\]
-
-The browser talks to Supabase directly with the signed-in user's token, so RLS decides what each person sees; the Next.js server only guards routes and sends invite emails.
+A React single-page app talks to a FastAPI backend over a JSON API; the backend owns the database, sign-in and every permission check. Everything runs on one machine with SQLite, with no cloud account.
 
 | Layer | Choice | Why |
 | --- | --- | --- |
-| Framework | Next.js 15 (App Router) + TypeScript | Routing, server actions, one deploy |
-| Styling | Tailwind CSS + shadcn/ui | Tokens from the design section map straight to Tailwind config |
+| Frontend | React + Vite + TypeScript | Fast dev server; no server-side rendering needed |
+| Styling | Tailwind CSS + shadcn/ui | Tokens from the design section map straight to CSS variables |
 | Drag and drop | @dnd-kit/core + sortable | Accessible, works with keyboard and touch |
-| Data fetching | @supabase/ssr + TanStack Query | Cache, optimistic card moves |
-| Auth | Supabase Auth (email, Google) | Sessions, reset, confirmation handled for you |
-| Database | Supabase Postgres + RLS | Access rules live in the database |
-| Realtime | Supabase Realtime on `tasks` | Board updates when a teammate moves a card |
-| Email | Resend | Invitation emails |
-| Hosting | Vercel | Push to GitHub = deploy |
-| Vibe-coding tool | Cursor or Claude Code (or Lovable for a no-setup start) | Lovable has a built-in Supabase connection |
+| Data fetching | TanStack Query | Cache, optimistic card moves |
+| Backend | FastAPI + SQLAlchemy (Python, run with uv) | Readable permission logic, easy to test |
+| Auth | bcrypt password hashes + signed session cookie | No external service |
+| Database | SQLite locally, Postgres in production | One `DATABASE_URL` setting |
+| Live updates | Polling every 5 seconds | Move to websockets when a team feels the lag |
+| Email | None yet; invite links are copied by hand | Add Resend when deploying |
+| Hosting | Vercel (frontend) + Render or Railway (API) | Not set up yet |
 
 **Folder structure**
 
 ```
-app/
-  (auth)/login, signup, invite/[token]
-  (app)/[workspace]/dashboard
-  (app)/[workspace]/projects/[key]/board | list | dashboard
-  api/invite/route.ts
-components/  board/, task/, sidebar/, stats/, ui/ (shadcn)
-lib/         supabase/{client,server}.ts, queries.ts, types.ts
-supabase/    migrations/*.sql
-middleware.ts
+backend/
+  app/      main.py, auth.py, routes.py, dashboard.py, models.py, db.py, seed.py
+  tests/    test_api.py
+frontend/
+  src/      main.tsx, lib/, components/, pages/
 ```
 
-## Build plan for vibe coding
 
-Build in eleven steps across two phases, one prompt each, and test in the browser before the next. Give the AI this whole PRD once at the start (save it as `PRD.md` in the repo root, or as `CLAUDE.md` / `.cursorrules`), then send the prompts below in order.
+## Build plan
 
-**Phase 1: core functionality, no login**
+Phases 1 and 2 were built in one pass on Nov 15, 2026 on the Python stack, so the eleven Supabase-era prompts were removed. For later changes keep the same habits: one feature per prompt, commit after each, and re-run the backend tests (`uv run pytest`) and the checklist below.
 
-1. **Scaffold.** "Create a Next.js 15 App Router project with TypeScript, Tailwind and shadcn/ui. Add the colour tokens from PRD.md to `tailwind.config` and `globals.css`. Install @supabase/supabase-js, @tanstack/react-query, @dnd-kit/core, @dnd-kit/sortable, recharts, lucide-react. Add `.env.local.example` with SUPABASE\_URL, ANON\_KEY and DEFAULT\_WORKSPACE\_ID."
-2. **Database, dev mode.** "Create `supabase/migrations/0001_init.sql` from the Data model section of PRD.md, but leave RLS disabled for now and make `created_by` nullable. Seed one workspace called Default, two projects and 12 tasks spread across stages. The app reads the workspace from DEFAULT\_WORKSPACE\_ID instead of a logged-in user." Then run it in Supabase.
-3. **App shell.** "Build the layout from the UI section: dark top nav, left project sidebar with search, stars and status, project header. Leave out the workspace switcher and avatar menu for now."
-4. **Board, read-only.** "Build the board page at /\[workspace\]/projects/\[key\]/board: the six stat cards and five Kanban columns with task cards exactly as specified in F3–F5, loading tasks from Supabase."
-5. **Create, edit, mark done.** "Add the New Task dialog and the task detail drawer (F6, F7), with optimistic updates via TanStack Query and toasts on error. Assignees are free-text names for now."
-6. **Drag and drop.** "Add dnd-kit so cards move between columns and reorder within one (F4). Persist `stage` and `position`."
-7. **List view, filters, search.** "Add the toolbar filters, sort, Board/List toggle and the list table (F2, F8). Add Ctrl+K global search (F11)."
-8. **Dashboard.** "Build the workspace dashboard and the project Dashboard tab from F12: one Postgres function per widget, Recharts for the charts, filters for date range, project and assignee."
-9. **Comments and activity.** "Add comments and the activity log in the task drawer (F9), with the author shown as 'Guest' until accounts exist."
+Still to do before a real team uses it: Google sign-in, password reset, email confirmation and invite emails (each needs an external service), deployment, and websockets for live updates.
 
-**Phase 2: accounts and teams**
-
-10. **Auth and access.** "Add @supabase/ssr. Build /login and /signup with email + password and Google. Add `middleware.ts` that redirects logged-out users. Add onboarding that creates a workspace, move the seed data into it, replace DEFAULT\_WORKSPACE\_ID with the user's membership, turn on RLS with the policies in PRD.md, and switch assignees to real users."
-11. **Team features.** "Add the workspace switcher and avatar menu, invitations by email with roles (Accounts section), in-app notifications (F10), and Supabase Realtime on `tasks` so teammates see card moves live."
-
-Phase 1 has no login and no RLS, so anyone with the link and the anon key can read and change the data. Run it on localhost (or a password-protected Vercel preview) and keep real data out until step 10 is done.
-
-After step 11: deploy to Vercel, add the Vercel domain to Supabase Auth URL settings, and invite two real teammates.
 
 **Testing checklist before calling v1 done**
 
-- [ ] Two accounts in different workspaces cannot see each other's projects (try it with the browser console and the anon key)
+- [ ] Two accounts in different workspaces cannot see each other's projects (covered by `backend/tests/test_api.py`; also try it by calling the API directly)
 - [ ] A Viewer cannot create, move or delete a task
 - [ ] Task keys stay unique when two people create tasks at the same moment
 - [ ] Overdue count matches the red due chips on the board
@@ -478,7 +331,7 @@ After step 11: deploy to Vercel, add the Vercel domain to Supabase Auth URL sett
 **Requirements**
 
 - Board with 300 tasks loads in under 2 seconds on a normal connection; a card move shows instantly (optimistic)
-- Every table has RLS on; the service-role key never reaches the browser
+- Every API route checks workspace membership and role; passwords are stored only as bcrypt hashes
 - WCAG AA contrast on all text; every drag action also possible by keyboard or the Stage dropdown
 - All times stored in UTC, shown in the user's time zone (default Asia/Jakarta)
 - UI copy in English for v1, strings kept in one file so Bahasa Indonesia can be added
@@ -487,10 +340,10 @@ After step 11: deploy to Vercel, add the Vercel domain to Supabase Auth URL sett
 
 | Risk | What goes wrong | Mitigation |
 | --- | --- | --- |
-| RLS gaps | AI-generated code skips a policy and leaks data between workspaces | Run the two-account test in the checklist after every schema change |
+| Permission gaps | A new route skips the membership check and leaks data between workspaces | Every workspace route goes through the same membership dependency; run the two-account test after every backend change |
 | Look-alike of an employer's tool | Copying a company's internal product too closely, including its name or logo, can breach your contract or IP rules | Own name, own logo, blue palette; check before showing it publicly or on a CV |
 | Scope creep | Chat, reports and AI features stall the MVP | Ship F1–F8 first; everything else waits for real usage |
-| Vibe-code drift | Later prompts silently rewrite earlier working code | Commit to Git after each of the eleven steps; one feature per prompt |
+| Vibe-code drift | Later prompts silently rewrite earlier working code | Commit to Git after each feature; one feature per prompt |
 
 **Open questions**
 
