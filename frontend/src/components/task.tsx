@@ -134,6 +134,38 @@ export function TaskDrawer({ ctx, taskId, onClose }: { ctx: Ws; taskId: number |
   )
 }
 
+/** Authors edit their own comment; authors, admins and owners can delete it (same rule as the server). */
+function CommentItem({ c, ctx }: { c: TaskDetail["comments"][number]; ctx: Ws }) {
+  const [draft, setDraft] = useState<string | null>(null) // null = not editing
+  const save = useAct((body: string) => api(`/comments/${c.id}`, "PATCH", { body }), ["task"])
+  const remove = useAct(() => api(`/comments/${c.id}`, "DELETE"), ["task"])
+  const mine = c.author_id === ctx.me.user.id
+  const submit = () => { if (draft?.trim() && !save.isPending) save.mutate(draft.trim(), { onSuccess: () => setDraft(null) }) }
+  return (
+    <div className="flex gap-2">
+      <Face name={c.author} />
+      <div className="min-w-0 flex-1">
+        <p className="flex flex-wrap items-center gap-x-2 text-[13px]">
+          <span className="font-medium">{c.author}</span> <span className="text-muted-foreground">{ago(c.created_at)}</span>
+          {ctx.canEdit && draft == null && <>
+            {mine && <button className="text-primary hover:underline" onClick={() => setDraft(c.body)}>{t.task.editComment}</button>}
+            {(mine || ctx.isAdmin) && <button className="text-stat-overdue hover:underline" onClick={() => { if (confirm(t.task.confirmDeleteComment)) remove.mutate(undefined) }}>{t.task.delete}</button>}
+          </>}
+        </p>
+        {draft == null ? <p className="break-words whitespace-pre-wrap">{c.body}</p> : (
+          <div className="mt-1 grid gap-2" onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.stopPropagation(); submit() } }}>
+            <Textarea autoFocus rows={2} maxLength={5000} aria-label={t.task.editComment} value={draft} onChange={(e) => setDraft(e.target.value)} />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setDraft(null)}>{t.task.cancel}</Button>
+              <Button size="sm" disabled={!draft.trim() || save.isPending} onClick={submit}>{t.task.saveComment}</Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function DrawerBody({ ctx, detail, onClose }: { ctx: Ws; detail: TaskDetail; onClose: () => void }) {
   const { task } = detail
   const { data: members = [] } = useMembers(ctx.ws)
@@ -174,15 +206,7 @@ function DrawerBody({ ctx, detail, onClose }: { ctx: Ws; detail: TaskDetail; onC
       <section className="grid gap-3">
         <h3 className="font-semibold">{t.task.comments}</h3>
         {detail.comments.length === 0 && <p className="text-muted-foreground">{t.task.noComments}</p>}
-        {detail.comments.map((c) => (
-          <div key={c.id} className="flex gap-2">
-            <Face name={c.author} />
-            <div className="min-w-0">
-              <p className="text-[13px]"><span className="font-medium">{c.author}</span> <span className="text-muted-foreground">{ago(c.created_at)}</span></p>
-              <p className="break-words whitespace-pre-wrap">{c.body}</p>
-            </div>
-          </div>
-        ))}
+        {detail.comments.map((c) => <CommentItem key={c.id} c={c} ctx={ctx} />)}
         {ctx.canEdit && (
           <div className="grid gap-2" onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.stopPropagation(); sendComment() } }}>
             <Textarea rows={2} maxLength={5000} aria-label={t.task.commentPlaceholder} placeholder={t.task.commentPlaceholder} value={comment} onChange={(e) => setComment(e.target.value)} />

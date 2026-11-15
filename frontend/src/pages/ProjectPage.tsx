@@ -4,7 +4,7 @@ import { Link, NavLink, Navigate, useParams, useSearchParams } from "react-route
 import { ArrowLeft, ChartColumn, Filter, Kanban, List, Plus, Search, Settings, Star, X } from "lucide-react"
 import { Board } from "@/components/Board"
 import { Choose, Empty, Tile, options } from "@/components/bits"
-import { useWs } from "@/components/Shell"
+import { ProjectDialog, useWs } from "@/components/Shell"
 import { TaskDialog } from "@/components/task"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -29,6 +29,7 @@ export default function ProjectPage() {
   const store = `${ctx.me.user.id}:${ctx.ws}:${key}`
   const [filters, setFilters] = useStored<Filters>(`gemma:filters:${store}`, NO_FILTERS)
   const [creating, setCreating] = useState<Stage | null>(null)
+  const [editing, setEditing] = useState(false)
   const patch = usePatchTask(ctx.ws)
   const project = projects?.find((p) => p.key === key)
   const star = useAct((starred: boolean) => api(`/projects/${project?.id}/star`, "PUT", { starred }), ["projects"])
@@ -92,6 +93,8 @@ export default function ProjectPage() {
           <DropdownMenu>
             <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label={t.project.settings} />}><Settings /></DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-48">
+              <DropdownMenuItem onClick={() => setEditing(true)}>{t.project.edit}</DropdownMenuItem>
+              <DropdownMenuSeparator />
               {(["open", "closed", "cancelled"] as const).map((s) => (
                 <DropdownMenuItem key={s} onClick={() => update.mutate({ status: s })} className={cn(project.status === s && "font-semibold")}>
                   {t.project.setStatus}: {t.status[s]}
@@ -139,6 +142,7 @@ export default function ProjectPage() {
           : <TaskTable tasks={visible} group={filters.group} canEdit={ctx.canEdit} onOpen={open} onDone={(id, done) => patch({ id, done })} />}
       </>}
       {ctx.canEdit && <TaskDialog ctx={ctx} project={project} stage={creating} onClose={() => setCreating(null)} />}
+      {ctx.isAdmin && <ProjectDialog ws={ctx.ws} project={project} open={editing} onClose={() => setEditing(false)} />}
     </div>
   )
 }

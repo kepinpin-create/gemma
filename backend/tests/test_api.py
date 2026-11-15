@@ -184,3 +184,45 @@ def test_dashboard_counts():
     assert len(d["trend"]) == 8 and d["trend"][-1] == {"week": d["trend"][-1]["week"], "created": 3, "completed": 1}
     assert [t["key"] for t in d["overdue"]] == ["AAA-1"] and [t["key"] for t in d["my_tasks"]] == ["AAA-1"]
     assert d["workload"][0]["medium"] == 1
+
+
+def test_change_password_signs_out_other_devices():
+    phone = signup("p")
+    laptop = TestClient(app)
+    assert laptop.post("/api/auth/login", json={"email": phone.email, "password": PW}).status_code == 200
+    assert phone.post("/api/auth/password", json={"current_password": "wrong-password", "new_password": "new-password-2"}).status_code == 400
+    assert phone.post("/api/auth/password", json={"current_password": PW, "new_password": "short"}).status_code == 422
+    assert phone.post("/api/auth/password", json={"current_password": PW, "new_password": "new-password-2"}).status_code == 200
+    assert phone.get("/api/auth/me").status_code == 200   # the device that changed it stays in
+    assert laptop.get("/api/auth/me").status_code == 401  # every other session is out
+    assert laptop.post("/api/auth/login", json={"email": phone.email, "password": PW}).status_code == 401
+    assert laptop.post("/api/auth/login", json={"email": phone.email, "password": "new-password-2"}).status_code == 200
+
+
+def test_comments_edit_and_delete_rules():
+    owner, author, other, outsider = signup("owner"), signup("author"), signup("other"), signup("outsider")
+    ws = workspace(owner)
+    join(owner, ws, author, "member")
+    join(owner, ws, other, "member")
+    tid = task(owner, project(owner, ws))["id"]
+    cid = author.post(f"/api/tasks/{tid}/comments", json={"body": "first"}).json()["id"]
+    assert other.patch(f"/api/comments/{cid}", json={"body": "x"}).status_code == 403
+    assert owner.patch(f"/api/comments/{cid}", json={"body": "x"}).status_code == 403  # nobody rewrites another person's words
+    assert outsider.patch(f"/api/comments/{cid}", json={"body": "x"}).status_code == 404
+    assert author.patch(f"/api/comments/{cid}", json={"body": "edited"}).json()["body"] == "edited"
+    assert other.delete(f"/api/comments/{cid}").status_code == 403
+    assert outsider.delete(f"/api/comments/{cid}").status_code == 404
+    assert owner.delete(f"/api/comments/{cid}").status_code == 200  # admins and owners can remove any comment
+    assert author.get(f"/api/tasks/{tid}").json()["comments"] == []
+
+
+def test_mark_all_notifications_read():
+    owner, member = signup("owner"), signup("member")
+    ws = workspace(owner)
+    join(owner, ws, member, "member")
+    pid = project(owner, ws)
+    task(owner, pid, assignee_ids=[member.uid])
+    task(owner, pid, assignee_ids=[member.uid])
+    assert [n["read"] for n in member.get("/api/notifications").json()] == [False, False]
+    assert member.post("/api/notifications/read-all").status_code == 200
+    assert [n["read"] for n in member.get("/api/notifications").json()] == [True, True]

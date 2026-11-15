@@ -20,6 +20,7 @@ export default function PeoplePage() {
   const [role, setRole] = useState<Role>("member")
 
   const rename = useAct((full_name: string) => api("/auth/me", "PATCH", { full_name }), ["me", "members", "tasks"])
+  const changePassword = useAct((body: Record<string, string>) => api("/auth/password", "POST", body), [])
   const setMemberRole = useAct((v: { id: number; role: Role }) => api(`/workspaces/${ctx.ws}/members/${v.id}`, "PATCH", { role: v.role }), ["members"])
   const remove = useAct((id: number) => api(`/workspaces/${ctx.ws}/members/${id}`, "DELETE"), ["members", "tasks"])
   const invite = useAct((body: { email: string; role: Role }) => api<Invitation>(`/workspaces/${ctx.ws}/invitations`, "POST", body), ["invitations"])
@@ -42,6 +43,20 @@ export default function PeoplePage() {
           <Button type="submit" disabled={!name.trim() || name.trim() === ctx.me.user.full_name || rename.isPending}>{t.people.save}</Button>
         </div>
         <p className="text-muted-foreground">{ctx.me.user.email}</p>
+      </form>
+
+      <form className={card} onSubmit={(e) => {
+        e.preventDefault()
+        const el = e.currentTarget
+        changePassword.mutate(Object.fromEntries(new FormData(el)) as Record<string, string>, { onSuccess: () => { el.reset(); toast.success(t.people.passwordChanged) } })
+      }}>
+        <h2 className="font-semibold">{t.people.password}</h2>
+        <div className="flex flex-wrap items-end gap-2">
+          <Field label={t.people.currentPassword} className="min-w-44 flex-1"><Input name="current_password" type="password" required maxLength={72} autoComplete="current-password" /></Field>
+          <Field label={t.people.newPassword} className="min-w-44 flex-1"><Input name="new_password" type="password" required minLength={8} maxLength={72} autoComplete="new-password" aria-describedby="new-pw-hint" /></Field>
+          <Button type="submit" disabled={changePassword.isPending}>{t.people.save}</Button>
+        </div>
+        <p id="new-pw-hint" className="text-xs text-muted-foreground">{t.auth.passwordHint}</p>
       </form>
 
       <section className={card}>

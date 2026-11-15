@@ -1,3 +1,5 @@
+import hashlib
+
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
@@ -10,10 +12,27 @@ from .models import ROLES, Member, User, Workspace
 router = APIRouter(prefix="/api/auth")
 
 
+def _hash(password: str) -> str:
+    pw = password.encode()
+    if len(pw) > 72:  # bcrypt reads at most 72 bytes; refuse rather than silently truncate
+        raise HTTPException(422, "Password is too long")
+    return bcrypt.hashpw(pw, bcrypt.gensalt()).decode()
+
+
+def _matches(password: str, user: User) -> bool:
+    pw = password.encode()
+    return len(pw) <= 72 and bcrypt.checkpw(pw, user.password_hash.encode())
+
+
+def _password_version(user: User) -> str:
+    return hashlib.sha256(user.password_hash.encode()).hexdigest()[:16]
+
+
 def current_user(request: Request, db: Session = Depends(get_db)) -> User:
     uid = request.session.get("uid")
     user = db.get(User, uid) if uid else None
-    if not user:
+    # "pv" ties the session to the current password, so changing it signs out every other device.
+    if not user or request.session.get("pv") != _password_version(user):
         raise HTTPException(401, "Not signed in")
     return user
 
@@ -54,21 +73,23 @@ class Profile(BaseModel):
     full_name: str = Field(min_length=1, max_length=100)
 
 
+class PasswordChange(BaseModel):
+    current_password: str = Field(max_length=72)
+    new_password: str = Field(min_length=8, max_length=72)
+
+
 def _sign_in(request: Request, user: User):
     request.session.clear()
     request.session["uid"] = user.id
+    request.session["pv"] = _password_version(user)
 
 
 @router.post("/signup")
 def signup(body: Signup, request: Request, db: Session = Depends(get_db)):
     email = body.email.lower()
-    pw = body.password.encode()
-    if len(pw) > 72:
-        raise HTTPException(422, "Password is too long")
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(409, "An account with this email already exists")
-    user = User(email=email, full_name=body.full_name.strip(),
-                password_hash=bcrypt.hashpw(pw, bcrypt.gensalt()).decode())
+    user = User(email=email, full_name=body.full_name.strip(), password_hash=_hash(body.password))
     db.add(user)
     db.commit()
     _sign_in(request, user)
@@ -78,11 +99,20 @@ def signup(body: Signup, request: Request, db: Session = Depends(get_db)):
 @router.post("/login")
 def login(body: Credentials, request: Request, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(User.email == body.email.lower()))
-    pw = body.password.encode()
-    if not user or len(pw) > 72 or not bcrypt.checkpw(pw, user.password_hash.encode()):
+    if not user or not _matches(body.password, user):
         raise HTTPException(401, "Wrong email or password")
     _sign_in(request, user)
     return me_out(db, user)
+
+
+@router.post("/password")
+def change_password(body: PasswordChange, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if not _matches(body.current_password, user):
+        raise HTTPException(400, "Current password is wrong")
+    user.password_hash = _hash(body.new_password)
+    db.commit()
+    _sign_in(request, user)  # this device stays signed in; every other session is now invalid
+    return {"ok": True}
 
 
 @router.post("/logout")

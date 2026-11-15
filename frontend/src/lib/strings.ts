@@ -4,7 +4,7 @@ export const t = {
   nav: { dashboard: "Dashboard", tasks: "Tasks", projects: "Projects", reports: "Reports", chat: "Chat", later: "Not part of v1", menu: "Open project list" },
   search: { button: "Search tasks", shortcut: "Ctrl K", placeholder: "Search by task key or title…", empty: "No tasks match.", hint: "Type to search every project in this workspace." },
   bell: {
-    title: "Notifications", empty: "Nothing new.",
+    title: "Notifications", empty: "Nothing new.", readAll: "Mark all read",
     kind: { assigned: "You were assigned", comment: "New comment on", overdue: "Now overdue:" } as Record<string, string>,
   },
   account: { people: "People and settings", newWorkspace: "New workspace", logout: "Log out", switchWorkspace: "Switch workspace" },
@@ -14,7 +14,7 @@ export const t = {
   project: {
     back: "Back to dashboard", settings: "Project settings", archive: "Archive project", unarchive: "Restore project", setStatus: "Set status",
     name: "Project name", key: "Key", keyHint: "2–5 capital letters, e.g. MAS. Task keys start with it.", color: "Colour", start: "Start date", end: "End date",
-    create: "Create project", notFound: "This project does not exist in this workspace.",
+    create: "Create project", edit: "Edit project", save: "Save project", notFound: "This project does not exist in this workspace.",
   },
   toolbar: {
     search: "Search this project", allTypes: "All types", allAssignees: "All assignees", unassigned: "Unassigned",
@@ -33,6 +33,7 @@ export const t = {
     stage: "Stage", priority: "Priority", type: "Type", assignees: "Assignees", noAssignee: "Nobody", due: "Due date", approval: "Approval", reference: "Reference code", referencePlaceholder: "Optional, e.g. MAS/GAP/01/0047",
     create: "Create task", save: "Save changes", saveHint: "Ctrl+Enter", cancel: "Cancel", markDone: "Mark done", reopen: "Reopen", delete: "Delete", confirmDelete: "Delete this task? This cannot be undone.",
     createdBy: "Created by", updated: "Updated", comments: "Comments", commentPlaceholder: "Write a comment…", send: "Comment", noComments: "No comments yet.", activity: "Activity",
+    editComment: "Edit", saveComment: "Save", confirmDeleteComment: "Delete this comment?",
     notFound: "This task no longer exists.", readOnly: "You have view-only access.",
   },
   activity: {
@@ -50,6 +51,7 @@ export const t = {
   },
   people: {
     title: "People and settings", profile: "Your profile", displayName: "Display name", save: "Save", saved: "Saved",
+    password: "Change password", currentPassword: "Current password", newPassword: "New password", passwordChanged: "Password changed. Your other devices were signed out.",
     members: "Members", role: "Role", remove: "Remove", confirmRemove: "Remove this person from the workspace?", you: "you",
     invite: "Invite someone", email: "Email", send: "Create invite link", pending: "Pending invitations", copy: "Copy link", copied: "Invite link copied", revoke: "Revoke",
     inviteHint: "Gemma does not send email yet. Copy the link and send it yourself; it works for 7 days and only for that email address.",

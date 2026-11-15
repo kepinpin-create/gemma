@@ -402,7 +402,7 @@ def who(u: User | None) -> str:
 
 
 def comment_out(cm: Comment) -> dict:
-    return {"id": cm.id, "body": cm.body, "author": who(cm.author), "created_at": iso(cm.created_at)}
+    return {"id": cm.id, "body": cm.body, "author": who(cm.author), "author_id": cm.author_id, "created_at": iso(cm.created_at)}
 
 
 @router.get("/tasks/{tid}")
@@ -428,6 +428,33 @@ def add_comment(tid: int, body: CommentIn, c: Ctx = Depends()):
     notify(c.db, t, [u for u in owners if u], c.user, "comment")
     c.db.commit()
     return comment_out(cm)
+
+
+def comment_and_role(c: Ctx, cid: int) -> tuple[Comment, str]:
+    cm = c.db.get(Comment, cid)
+    if not cm:
+        raise HTTPException(404, "Not found")
+    return cm, c.require(c.task(cm.task_id, "member").workspace_id)
+
+
+@router.patch("/comments/{cid}")
+def edit_comment(cid: int, body: CommentIn, c: Ctx = Depends()):
+    cm, _ = comment_and_role(c, cid)
+    if cm.author_id != c.user.id:
+        raise HTTPException(403, "You can edit only your own comments")
+    cm.body = body.body.strip()
+    c.db.commit()
+    return comment_out(cm)
+
+
+@router.delete("/comments/{cid}")
+def delete_comment(cid: int, c: Ctx = Depends()):
+    cm, role = comment_and_role(c, cid)
+    if role == "member" and cm.author_id != c.user.id:
+        raise HTTPException(403, "Members can delete only their own comments")
+    c.db.delete(cm)
+    c.db.commit()
+    return {"ok": True}
 
 
 # ---------- notifications ----------
@@ -462,6 +489,14 @@ def read_notification(nid: int, c: Ctx = Depends()):
     if not n or n.user_id != c.user.id:
         raise HTTPException(404, "Not found")
     n.read_at = n.read_at or utcnow()
+    c.db.commit()
+    return {"ok": True}
+
+
+@router.post("/notifications/read-all")
+def read_all_notifications(c: Ctx = Depends()):
+    c.db.execute(update(Notification).where(Notification.user_id == c.user.id, Notification.read_at.is_(None))
+                 .values(read_at=utcnow()))
     c.db.commit()
     return {"ok": True}
 

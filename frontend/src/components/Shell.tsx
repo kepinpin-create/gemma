@@ -82,6 +82,7 @@ function TopNav({ ctx, name, onMenu, onSearch }: { ctx: Ws; name: string; onMenu
   const nav = useNavigate()
   const { data: notices = [] } = useNotices()
   const read = useAct((id: number) => api(`/notifications/${id}/read`, "POST"), ["notices"])
+  const readAll = useAct(() => api("/notifications/read-all", "POST"), ["notices"])
   const logout = async () => {
     await api("/auth/logout", "POST").catch(() => null)
     queryClient.clear()
@@ -124,6 +125,7 @@ function TopNav({ ctx, name, onMenu, onSearch }: { ctx: Ws; name: string; onMenu
         <DropdownMenuContent align="end" className="max-h-[70vh] w-80 overflow-y-auto">
           <p className="px-2 py-1.5 font-semibold">{t.bell.title}</p>
           {notices.length === 0 && <Empty>{t.bell.empty}</Empty>}
+          {notices.some((n) => !n.read) && <DropdownMenuItem closeOnClick={false} className="text-primary" onClick={() => readAll.mutate(undefined)}>{t.bell.readAll}</DropdownMenuItem>}
           {notices.map((n) => (
             <DropdownMenuItem key={n.id} className="items-start"
               onClick={() => { if (!n.read) read.mutate(n.id); nav(`/${n.task.workspace_id}/projects/${n.task.project_key}/board?task=${n.task.id}`) }}>
@@ -184,7 +186,7 @@ function Sidebar({ ctx, onPick }: { ctx: Ws; onPick?: () => void }) {
           </button>
         </div>
         {on && (
-          <ul className="my-1 ml-6 grid gap-0.5 border-l pl-3 text-[13px]">
+          <ul className="my-1 ml-6 grid grid-cols-1 gap-0.5 border-l pl-3 text-[13px]">
             {([["board", Kanban], ["list", List]] as const).map(([view, Icon]) => (
               <li key={view}>
                 <NavLink to={`/${ctx.ws}/projects/${p.key}/${view}`} onClick={onPick}
@@ -213,48 +215,51 @@ function Sidebar({ ctx, onPick }: { ctx: Ws; onPick?: () => void }) {
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {starred.length > 0 && <>
           <h2 className="px-2 pt-1 pb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">{t.sidebar.starred}</h2>
-          <ul className="grid gap-0.5">{starred.map(row)}</ul>
+          <ul className="grid grid-cols-1 gap-0.5">{starred.map(row)}</ul>
         </>}
         <h2 className="px-2 pt-3 pb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">{archived ? t.sidebar.archived : t.sidebar.projects}</h2>
-        <ul className="grid gap-0.5">{rest.map(row)}</ul>
+        <ul className="grid grid-cols-1 gap-0.5">{rest.map(row)}</ul>
         {shown.length === 0 && <Empty>{t.sidebar.empty}</Empty>}
       </div>
       {ctx.isAdmin && (
         <div className="border-t p-3">
           <Button variant="outline" className="w-full" onClick={() => setCreating(true)}><Plus />{t.sidebar.newProject}</Button>
-          <NewProject ws={ctx.ws} open={creating} onClose={() => setCreating(false)} onPick={onPick} />
+          <ProjectDialog ws={ctx.ws} open={creating} onClose={() => setCreating(false)} onPick={onPick} />
         </div>
       )}
     </div>
   )
 }
 
-function NewProject({ ws, open, onClose, onPick }: { ws: number; open: boolean; onClose: () => void; onPick?: () => void }) {
+/** Create a project, or edit one when `project` is given. The key is fixed after creation because task keys are built from it. */
+export function ProjectDialog({ ws, project, open, onClose, onPick }: { ws: number; project?: Project; open: boolean; onClose: () => void; onPick?: () => void }) {
   const nav = useNavigate()
-  const create = useAct((body: Record<string, unknown>) => api<Project>(`/workspaces/${ws}/projects`, "POST", body), ["projects"])
+  const save = useAct((body: Record<string, unknown>) =>
+    project ? api<Project>(`/projects/${project.id}`, "PATCH", body) : api<Project>(`/workspaces/${ws}/projects`, "POST", body), ["projects", "dashboard"])
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <form className="grid gap-4" onSubmit={(e) => {
           e.preventDefault()
           const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>
-          create.mutate({ name: f.name.trim(), key: f.key.toUpperCase(), color: f.color, start_date: f.start_date || null, end_date: f.end_date || null },
-            { onSuccess: (p) => { onClose(); onPick?.(); nav(`/${ws}/projects/${p.key}`) } })
+          const body = { name: f.name.trim(), color: f.color, start_date: f.start_date || null, end_date: f.end_date || null }
+          save.mutate(project ? body : { ...body, key: f.key.toUpperCase() },
+            { onSuccess: (p) => { onClose(); onPick?.(); if (!project) nav(`/${ws}/projects/${p.key}`) } })
         }}>
-          <DialogHeader><DialogTitle>{t.sidebar.newProject}</DialogTitle></DialogHeader>
-          <Field label={t.project.name}><Input name="name" required maxLength={80} autoFocus /></Field>
+          <DialogHeader><DialogTitle>{project ? t.project.edit : t.sidebar.newProject}</DialogTitle></DialogHeader>
+          <Field label={t.project.name}><Input name="name" required maxLength={80} autoFocus defaultValue={project?.name} /></Field>
           <div className="grid grid-cols-[1fr_auto] gap-3">
-            <Field label={t.project.key}><Input name="key" required pattern="[A-Za-z]{2,5}" maxLength={5} className="uppercase" aria-describedby="key-hint" /></Field>
-            <Field label={t.project.color}><Input name="color" type="color" defaultValue="#1D4ED8" className="w-16 p-1" /></Field>
+            <Field label={t.project.key}><Input name="key" required pattern="[A-Za-z]{2,5}" maxLength={5} className="uppercase" aria-describedby="key-hint" defaultValue={project?.key} disabled={!!project} /></Field>
+            <Field label={t.project.color}><Input name="color" type="color" defaultValue={project?.color ?? "#1D4ED8"} className="w-16 p-1" /></Field>
           </div>
           <p id="key-hint" className="-mt-2 text-xs text-muted-foreground">{t.project.keyHint}</p>
           <div className="grid grid-cols-2 gap-3">
-            <Field label={t.project.start}><Input name="start_date" type="date" /></Field>
-            <Field label={t.project.end}><Input name="end_date" type="date" /></Field>
+            <Field label={t.project.start}><Input name="start_date" type="date" defaultValue={project?.start_date ?? ""} /></Field>
+            <Field label={t.project.end}><Input name="end_date" type="date" defaultValue={project?.end_date ?? ""} /></Field>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>{t.task.cancel}</Button>
-            <Button type="submit" disabled={create.isPending}>{t.project.create}</Button>
+            <Button type="submit" disabled={save.isPending}>{project ? t.project.save : t.project.create}</Button>
           </DialogFooter>
         </form>
       </DialogContent>

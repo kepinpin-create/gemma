@@ -34,7 +34,7 @@ export interface Task extends Omit<TaskInput, "assignee_ids"> {
 export type TaskPatch = Partial<TaskInput> & { position?: number; done?: boolean }
 export interface TaskDetail {
   task: Task; created_by_name: string
-  comments: { id: number; body: string; author: string; created_at: string }[]
+  comments: { id: number; body: string; author: string; author_id: number | null; created_at: string }[]
   activity: { id: number; action: string; from: string | null; to: string | null; actor: string; created_at: string }[]
 }
 export interface Notice {
